@@ -383,9 +383,9 @@ func main() {
 						break
 					}
 				}
-				log.Printf("[%d] Session End", num)
+				log.Printf("[%d] Session End", n)
 			}
-		}(theURL, PlayTime, num)
+		}(theURL, PlayTime, i)
 
 		time.Sleep(time.Duration(Interval * 1000000000))
 	}
