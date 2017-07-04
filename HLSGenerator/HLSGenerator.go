@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -10,9 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,8 +28,7 @@ type configInfo struct {
 }
 
 type gslbSetup struct {
-	serverIP       string
-	serverPort     string
+	address        string
 	ServiceCode    string `json:"serviceCode"`
 	ClientIP       string `json:"clientIp"`
 	ProtocolType   string `json:"protocolType"`
@@ -49,7 +47,7 @@ type gslbresponse struct {
 func gslbsetup(info *gslbSetup) (string, error) {
 	doc, _ := json.Marshal(info)
 	buff := bytes.NewBuffer(doc)
-	url := "http://" + info.serverIP + ":" + info.serverPort + "/command/demandOtu"
+	url := "http://" + info.address + "/command/demandOtu"
 	resp, err := http.Post(url, "application/json", buff)
 	if err != nil {
 		return "", err
@@ -165,7 +163,7 @@ func download(u *url.URL, c *http.Client, f float64) {
 	start := time.Now()
 	content, _, err := getContent(u, c)
 	if err != nil {
-		log.Println("error:", err)
+		log.Println("error:", err, "url:", u.String())
 		return
 	}
 
@@ -174,7 +172,7 @@ func download(u *url.URL, c *http.Client, f float64) {
 		_, err := content.Read(buf)
 
 		if err != nil && err != io.EOF {
-			log.Println("error:", err)
+			log.Println("error:", err, "url:", u.String())
 			break
 		}
 
@@ -238,32 +236,21 @@ func getPlaylist(u *url.URL, t int, c *http.Client) {
 
 func main() {
 
-	if len(os.Args) < 6 {
+	FileName := flag.String("filename", "", "generation info file name. ")
+	Address := flag.String("addr", "", "gslb server addresss. (ex) 127.0.0.1:18085")
+	SessionCount := flag.Int("count", 0, "the number of session. default is generation info file count")
+	Interval := flag.Int("interval", 1, "session generation interval (second)")
+	PlayTime := flag.Int("playtime", 900, "play time (second)")
+
+	flag.Parse()
+
+	if *FileName == "" || *Address == "" {
 		log.Println("HLSGenerator v1.0.2")
-		log.Println("Usage: HLSGenerator [generation_info_file_name] [server_ip] [the_number_of_session] [session_generation_interval] [play_time] [ server_port ] ")
+		flag.Usage()
 		return
 	}
 
-	FileName := os.Args[1]
-	ServerIP := os.Args[2]
-	SessionCount, err := strconv.Atoi(os.Args[3])
-	if err != nil {
-		log.Println("Not Valid Session Count")
-		return
-	}
-	Interval, err := strconv.Atoi(os.Args[4])
-	if err != nil {
-		log.Println("Not Valid Interval Time")
-		return
-	}
-	PlayTime, err := strconv.Atoi(os.Args[5])
-	if err != nil {
-		log.Println("Not Valid Play Time")
-		return
-	}
-	Port := os.Args[6]
-
-	configData, err := ioutil.ReadFile(FileName)
+	configData, err := ioutil.ReadFile(*FileName)
 	if err != nil {
 		log.Println("config file read file: ", err)
 		return
@@ -302,11 +289,15 @@ func main() {
 		return
 	}
 
+	if *SessionCount == 0 {
+		*SessionCount = len(cfglist)
+	}
+
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	wg := new(sync.WaitGroup)
 
-	for i := 0; i < SessionCount; i++ {
+	for i := 0; i < *SessionCount; i++ {
 		info := gslbSetup{}
 		num := i
 
@@ -314,8 +305,7 @@ func main() {
 			num %= len(cfglist)
 		}
 
-		info.serverIP = ServerIP
-		info.serverPort = Port
+		info.address = *Address
 		info.ServiceCode = cfglist[num].serviceCode
 		info.ClientIP = cfglist[num].destIP
 		info.ProtocolType = "http"
@@ -326,7 +316,7 @@ func main() {
 
 		localAddr, err := net.ResolveIPAddr("ip", info.ClientIP)
 		if err != nil {
-			log.Println("error:", err)
+			log.Printf("[%d] error: %s", i, err)
 			continue
 		}
 
@@ -335,14 +325,14 @@ func main() {
 		start := time.Now()
 		otuurl, err := gslbsetup(&info)
 		if err != nil {
-			log.Println("error:", err)
+			log.Printf("[%d] error: %s", i, err)
 			continue
 		}
-		log.Println("gslb response time:", (int(time.Now().Sub(start)) / 1000000), "ms")
+		log.Printf("[%d] gslb response time: %d ms", i, (int(time.Now().Sub(start)) / 1000000))
 
 		theURL, err := url.Parse(otuurl)
 		if err != nil {
-			log.Println("error:", err)
+			log.Printf("[%d] error: %s", i, err)
 			continue
 		}
 		wg.Add(1)
@@ -371,28 +361,28 @@ func main() {
 			start := time.Now()
 			url, err := glbSetup(u, client)
 			if err != nil {
-				log.Println("error:", err)
+				log.Printf("[%d] error: %s", n, err)
 				return
 			}
-			log.Println("glb response time:", (int(time.Now().Sub(start)) / 1000000), "ms")
+			log.Printf("[%d] glb response time: %d ms", n, (int(time.Now().Sub(start)) / 1000000))
 
 			start = time.Now()
 			content, url, err := getContent(url, client)
 			if err != nil {
-				log.Println("error:", err)
+				log.Printf("[%d] error: %s", n, err)
 				return
 			}
-			log.Println("vod response time:", (int(time.Now().Sub(start)) / 1000000), "ms")
+			log.Printf("[%d] vod response time: %d ms", n, (int(time.Now().Sub(start)) / 1000000))
 
 			playlist, listType, err := m3u8.DecodeFrom(content, true)
 			if err != nil {
-				log.Println("error:", err)
+				log.Printf("[%d] error: %s", n, err)
 				return
 			}
 			content.Close()
 
 			if listType != m3u8.MEDIA && listType != m3u8.MASTER {
-				log.Println("error: Not a valid playlist")
+				log.Printf("[%d] error: Not a valid playlist", n)
 				return
 			}
 
@@ -407,7 +397,7 @@ func main() {
 
 						msURL, err := absolutize(variant.URI, url)
 						if err != nil {
-							log.Println("error:", err)
+							log.Printf("[%d] error: %s", n, err)
 							return
 						}
 						getPlaylist(msURL, t, client)
@@ -424,7 +414,7 @@ func main() {
 					if segment != nil {
 						msURL, err := absolutize(segment.URI, u)
 						if err != nil {
-							log.Println("error:", err)
+							log.Printf("[%d] error: %s", n, err)
 							break
 						}
 						download(msURL, client, segment.Duration)
@@ -439,9 +429,9 @@ func main() {
 				}
 			}
 			log.Printf("[%d] Session End", n)
-		}(theURL, PlayTime, i)
+		}(theURL, *PlayTime, i)
 
-		time.Sleep(time.Duration(Interval * 1000000000))
+		time.Sleep(time.Duration(*Interval * 1000000000))
 	}
 	wg.Wait()
 	log.Println("the all end")
