@@ -21,12 +21,8 @@ import (
 )
 
 type configInfo struct {
-	protocol    string
 	fileName    string
-	clientID    string
 	destIP      string
-	destPort    int
-	speed       int
 	serviceCode string
 	contentType string
 	bitrateType string
@@ -283,26 +279,27 @@ func main() {
 	for i < len(token) {
 		if token[i] != "" {
 			data := strings.Fields(token[i])
-			if len(data) != 9 {
+			if len(data) != 5 {
 				log.Println("invalid config data : ", token[i])
 				i++
 				continue
 			}
 			cfg := configInfo{}
 
-			cfg.protocol = data[0]
-			cfg.fileName = data[1]
-			cfg.clientID = data[2]
-			cfg.destIP = data[3]
-			cfg.destPort, err = strconv.Atoi(data[4])
-			cfg.speed, err = strconv.Atoi(data[5])
-			cfg.serviceCode = data[6]
-			cfg.contentType = data[7]
-			cfg.bitrateType = data[8]
+			cfg.fileName = data[0]
+			cfg.destIP = data[1]
+			cfg.serviceCode = data[2]
+			cfg.contentType = data[3]
+			cfg.bitrateType = data[4]
 
 			cfglist = append(cfglist, cfg)
 		}
 		i++
+	}
+
+	if len(cfglist) == 0 {
+		log.Println("cfglist is zero.")
+		return
 	}
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -321,7 +318,7 @@ func main() {
 		info.serverPort = Port
 		info.ServiceCode = cfglist[num].serviceCode
 		info.ClientIP = cfglist[num].destIP
-		info.ProtocolType = cfglist[num].protocol
+		info.ProtocolType = "http"
 		info.ContentType = cfglist[num].contentType
 		info.Content = cfglist[num].fileName
 		info.RequestBitrate = cfglist[num].bitrateType

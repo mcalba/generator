@@ -196,6 +196,11 @@ func main() {
 		i++
 	}
 
+	if len(cfglist) == 0 {
+		log.Println("cfglist is zero.")
+		return
+	}
+
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	wg := new(sync.WaitGroup)
