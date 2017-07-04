@@ -243,7 +243,7 @@ func getPlaylist(u *url.URL, t int, c *http.Client) {
 func main() {
 
 	if len(os.Args) < 6 {
-		log.Println("HLSGenerator v1.0.1")
+		log.Println("HLSGenerator v1.0.2")
 		log.Println("Usage: HLSGenerator [generation_info_file_name] [server_ip] [the_number_of_session] [session_generation_interval] [play_time] [ server_port ] ")
 		return
 	}

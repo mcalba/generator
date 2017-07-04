@@ -140,7 +140,7 @@ func RTSPPlay(c *rtsp.Session, url string, id string, t int) error {
 func main() {
 
 	if len(os.Args) < 6 {
-		log.Println("RTSPGenerator v1.0.2")
+		log.Println("RTSPGenerator v1.0.3")
 		log.Println("Usage: RTSPGenerator [generation_info_file_name] [server_ip] [the_number_of_session] [session_generation_interval] [play_time] [ server_port ] ")
 		return
 	}
