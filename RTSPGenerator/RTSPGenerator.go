@@ -139,7 +139,7 @@ func main() {
 	FileName := flag.String("filename", "", "generation info file name. ")
 	Address := flag.String("addr", "", "glb server addresss. (ex) 127.0.0.1:1554")
 	SessionCount := flag.Int("count", 0, "the number of session. default is generation info file count")
-	Interval := flag.Int("interval", 1, "session generation interval (second)")
+	Interval := flag.Int("interval", 1000, "session generation interval (millisecond)")
 	PlayTime := flag.Int("playtime", 900, "play time (second)")
 
 	flag.Parse()
@@ -224,7 +224,7 @@ func main() {
 			log.Printf("[%d] Session End", n)
 		}(*PlayTime, i)
 
-		time.Sleep(time.Duration(*Interval * 1000000000))
+		time.Sleep(time.Duration(*Interval * 1000000))
 	}
 	wg.Wait()
 	log.Println("the all end")

@@ -100,6 +100,29 @@ func glbSetup(u *url.URL, c *http.Client) (*url.URL, error) {
 
 }
 
+func vodsetup(u *url.URL, c *http.Client) (io.ReadCloser, *url.URL, error) {
+
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req.Header.Set("User-Agent", "dahakan")
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, nil, fmt.Errorf("Received HTTP %v for %v", resp.StatusCode, u.String())
+	}
+
+	resurl := resp.Request
+
+	return resp.Body, resurl.URL, err
+
+}
+
 func getContent(u *url.URL, c *http.Client) (io.ReadCloser, *url.URL, error) {
 
 	//log.Println(u.String())
@@ -239,7 +262,7 @@ func main() {
 	FileName := flag.String("filename", "", "generation info file name. ")
 	Address := flag.String("addr", "", "gslb server addresss. (ex) 127.0.0.1:18085")
 	SessionCount := flag.Int("count", 0, "the number of session. default is generation info file count")
-	Interval := flag.Int("interval", 1, "session generation interval (second)")
+	Interval := flag.Int("interval", 1000, "session generation interval (millisecond)")
 	PlayTime := flag.Int("playtime", 900, "play time (second)")
 
 	flag.Parse()
@@ -322,23 +345,24 @@ func main() {
 
 		LocalBindAddr := &net.TCPAddr{IP: localAddr.IP}
 
-		start := time.Now()
-		otuurl, err := gslbsetup(&info)
-		if err != nil {
-			log.Printf("[%d] error: %s", i, err)
-			continue
-		}
-		log.Printf("[%d] gslb response time: %d ms", i, (int(time.Now().Sub(start)) / 1000000))
-
-		theURL, err := url.Parse(otuurl)
-		if err != nil {
-			log.Printf("[%d] error: %s", i, err)
-			continue
-		}
 		wg.Add(1)
-		go func(u *url.URL, t int, n int) {
+		go func(t int, n int) {
 
 			defer wg.Done()
+
+			start := time.Now()
+			otuurl, err := gslbsetup(&info)
+			if err != nil {
+				log.Printf("[%d] error: %s", n, err)
+				return
+			}
+			log.Printf("[%d] gslb response time: %d ms", i, (int(time.Now().Sub(start)) / 1000000))
+
+			theURL, err := url.Parse(otuurl)
+			if err != nil {
+				log.Printf("[%d] error: %s", n, err)
+				return
+			}
 
 			var httpTransport = &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
@@ -358,8 +382,8 @@ func main() {
 				},
 			}
 
-			start := time.Now()
-			url, err := glbSetup(u, client)
+			start = time.Now()
+			url, err := glbSetup(theURL, client)
 			if err != nil {
 				log.Printf("[%d] error: %s", n, err)
 				return
@@ -367,7 +391,7 @@ func main() {
 			log.Printf("[%d] glb response time: %d ms", n, (int(time.Now().Sub(start)) / 1000000))
 
 			start = time.Now()
-			content, url, err := getContent(url, client)
+			content, url, err := vodsetup(url, client)
 			if err != nil {
 				log.Printf("[%d] error: %s", n, err)
 				return
@@ -412,7 +436,7 @@ func main() {
 
 				for _, segment := range mediapl.Segments {
 					if segment != nil {
-						msURL, err := absolutize(segment.URI, u)
+						msURL, err := absolutize(segment.URI, theURL)
 						if err != nil {
 							log.Printf("[%d] error: %s", n, err)
 							break
@@ -429,9 +453,9 @@ func main() {
 				}
 			}
 			log.Printf("[%d] Session End", n)
-		}(theURL, *PlayTime, i)
+		}(*PlayTime, i)
 
-		time.Sleep(time.Duration(*Interval * 1000000000))
+		time.Sleep(time.Duration(*Interval * 1000000))
 	}
 	wg.Wait()
 	log.Println("the all end")
