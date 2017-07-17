@@ -136,8 +136,8 @@ func RTSPPlay(c *rtsp.Session, url string, id string, t int) error {
 
 func main() {
 
-	FileName := flag.String("filename", "", "generation info file name. ")
-	Address := flag.String("addr", "", "glb server addresss. (ex) 127.0.0.1:1554")
+	FileName := flag.String("filename", "", "generation info file name. mandatory ")
+	Address := flag.String("addr", "", "glb server addresss. mandatory (ex) 127.0.0.1:1554")
 	SessionCount := flag.Int("count", 0, "the number of session. default is generation info file count")
 	Interval := flag.Int("interval", 1000, "session generation interval (millisecond)")
 	PlayTime := flag.Int("playtime", 900, "play time (second)")

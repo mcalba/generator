@@ -259,8 +259,8 @@ func getPlaylist(u *url.URL, t int, c *http.Client) {
 
 func main() {
 
-	FileName := flag.String("filename", "", "generation info file name. ")
-	Address := flag.String("addr", "", "gslb server addresss. (ex) 127.0.0.1:18085")
+	FileName := flag.String("filename", "", "generation info file path. mandatory")
+	Address := flag.String("addr", "", "gslb server addresss. mandatory (ex) 127.0.0.1:18085")
 	SessionCount := flag.Int("count", 0, "the number of session. default is generation info file count")
 	Interval := flag.Int("interval", 1000, "session generation interval (millisecond)")
 	PlayTime := flag.Int("playtime", 900, "play time (second)")
@@ -268,7 +268,7 @@ func main() {
 	flag.Parse()
 
 	if *FileName == "" || *Address == "" {
-		log.Println("HLSGenerator v1.0.2")
+		log.Println("HLSGenerator v1.0.3")
 		flag.Usage()
 		return
 	}
