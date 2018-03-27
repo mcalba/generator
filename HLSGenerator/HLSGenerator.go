@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kz26/m3u8"
+	"github.com/grafov/m3u8"
 )
 
 type configInfo struct {
@@ -36,6 +36,7 @@ type gslbSetup struct {
 	Content        string `json:"content"`
 	RequestBitrate string `json:"requestBitrate"`
 	StreamingType  string `json:"streamingType"`
+	Path           string `json:"path"`
 }
 
 type gslbresponse struct {
@@ -81,7 +82,7 @@ func glbSetup(u *url.URL, c *http.Client) (*url.URL, error) {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "dahakan")
+	req.Header.Set("X-Castis-User-Agent", "dahakan")
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err
@@ -107,7 +108,7 @@ func vodsetup(u *url.URL, c *http.Client) (io.ReadCloser, *url.URL, error) {
 		return nil, nil, err
 	}
 
-	req.Header.Set("User-Agent", "dahakan")
+	req.Header.Set("X-Castis-User-Agent", "dahakan")
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -209,50 +210,185 @@ func download(u *url.URL, c *http.Client, f float64) {
 	time.Sleep(time.Duration(restime * 1000000))
 }
 
-func getPlaylist(u *url.URL, t int, c *http.Client) {
+func disconnectDownload(u *url.URL, c *http.Client, f float64) {
+	content, _, err := getContent(u, c)
+	if err != nil {
+		log.Println("error:", err, "url:", u.String())
+		return
+	}
 
-	for t > 0 {
+	content.Close()
+}
 
-		content, _, err := getContent(u, c)
-		if err != nil {
-			log.Println("error:", err)
-			break
-		}
+func getPlaylist(v *m3u8.Variant, u *url.URL, t int, c *http.Client, n int) {
+	msURL, err := absolutize(v.URI, u)
+	if err != nil {
+		log.Println("error:", err)
+		return
+	}
 
-		playlist, listType, err := m3u8.DecodeFrom(content, true)
-		if err != nil {
-			log.Println("error:", err)
-			break
-		}
-		content.Close()
+	content, _, err := getContent(msURL, c)
+	if err != nil {
+		log.Println("error:", err)
+		return
+	}
 
-		if listType != m3u8.MEDIA && listType != m3u8.MASTER {
-			log.Println("error: Not a valid playlist")
-			break
-		}
+	playlist, listType, err := m3u8.DecodeFrom(content, true)
+	if err != nil {
+		log.Println("error:", err)
+		return
+	}
+	content.Close()
 
-		if listType == m3u8.MEDIA {
+	if listType != m3u8.MEDIA {
+		log.Println("error: invaild m3u8 Type")
+		return
+	}
 
-			mediapl := playlist.(*m3u8.MediaPlaylist)
-
+	mediapl := playlist.(*m3u8.MediaPlaylist)
+	if mediapl.Closed == false {
+		// live ( OTM Channel )
+		log.Printf("[%d] Adaptive Channel Session (OTM Channel)", n)
+		for t > 0 {
+			// chunk download
 			for idx, segment := range mediapl.Segments {
 				if segment == nil {
 					chunk := mediapl.Segments[idx-1]
 					if chunk != nil {
-						msURL, err := absolutize(chunk.URI, u)
+						chunkURL, err := absolutize(chunk.URI, u)
 						if err != nil {
 							log.Println("error:", err)
-							break
+							return
 						}
-						download(msURL, c, chunk.Duration)
+						download(chunkURL, c, chunk.Duration)
 						t -= int(chunk.Duration)
-						break
+					}
+				}
+				break
+			}
+			//m3u8 update
+			{
+				content, _, err = getContent(msURL, c)
+				if err != nil {
+					log.Println("error:", err)
+					return
+				}
+
+				playlist, listType, err = m3u8.DecodeFrom(content, true)
+				if err != nil {
+					log.Println("error:", err)
+					return
+				}
+				content.Close()
+
+				mediapl = playlist.(*m3u8.MediaPlaylist)
+			}
+		}
+	} else {
+		// vod ( OTM VOD )
+		log.Printf("[%d] Adaptive VOD Session (OTM VOD)", n)
+		var subplaylist m3u8.Playlist
+		var audioplaylist m3u8.Playlist
+		for _, alt := range v.Alternatives {
+			// sub, audio list download
+			if alt.URI != "" {
+				if alt.Type == "SUBTITLES" && subplaylist == nil {
+					altURL, err := absolutize(alt.URI, u)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
+
+					content, _, err := getContent(altURL, c)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
+
+					subplaylist, listType, err = m3u8.DecodeFrom(content, true)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
+					content.Close()
+
+					if listType != m3u8.MEDIA {
+						log.Println("error: invaild m3u8 Type")
+						return
+					}
+				}
+
+				if alt.Type == "AUDIO" && audioplaylist == nil {
+					altURL, err := absolutize(alt.URI, u)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
+
+					content, _, err := getContent(altURL, c)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
+
+					audioplaylist, listType, err = m3u8.DecodeFrom(content, true)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
+					content.Close()
+
+					if listType != m3u8.MEDIA {
+						log.Println("error: invaild m3u8 Type")
+						return
 					}
 				}
 			}
-		} else {
-			log.Println("error: invaild m3u8 Type")
-			break
+		}
+		subpl := subplaylist.(*m3u8.MediaPlaylist)
+		audiopl := audioplaylist.(*m3u8.MediaPlaylist)
+
+		for idx, segment := range mediapl.Segments {
+			start := time.Now()
+			// sub download
+			subseg := subpl.Segments[idx]
+			if subseg != nil {
+				msURL, err := absolutize(subseg.URI, u)
+				if err != nil {
+					log.Println("error:", err)
+					return
+				}
+				download(msURL, c, 0)
+			}
+
+			// audio download
+			audioseg := audiopl.Segments[idx]
+			if audioseg != nil {
+				msURL, err := absolutize(audioseg.URI, u)
+				if err != nil {
+					log.Println("error:", err)
+					return
+				}
+				download(msURL, c, 0)
+			}
+
+			// chunk download
+			if segment != nil {
+				msURL, err := absolutize(segment.URI, u)
+				if err != nil {
+					log.Println("error:", err)
+					return
+				}
+				download(msURL, c, segment.Duration)
+				t -= int(segment.Duration)
+			} else {
+				return
+			}
+
+			t -= int(int(time.Now().Sub(start)) / 1000000000)
+			if t <= 0 {
+				break
+			}
 		}
 	}
 }
@@ -260,15 +396,17 @@ func getPlaylist(u *url.URL, t int, c *http.Client) {
 func main() {
 
 	FileName := flag.String("filename", "", "generation info file path. mandatory")
-	Address := flag.String("addr", "", "gslb server addresss. mandatory (ex) 127.0.0.1:18085")
+	Address := flag.String("addr", "", "server addresss. mandatory (ex) 127.0.0.1:18085")
 	SessionCount := flag.Int("count", 0, "the number of session. default is generation info file count")
 	Interval := flag.Int("interval", 1000, "session generation interval (millisecond)")
 	PlayTime := flag.Int("playtime", 900, "play time (second)")
+	StreamingType := flag.String("type", "static", "streaming type. adaptive or static")
+	UseGSLB := flag.Bool("gslb", true, "use gslb. true or false")
 
 	flag.Parse()
 
 	if *FileName == "" || *Address == "" {
-		log.Println("HLSGenerator v1.0.3")
+		log.Println("HLSGenerator v1.0.5")
 		flag.Usage()
 		return
 	}
@@ -335,7 +473,8 @@ func main() {
 		info.ContentType = cfglist[num].contentType
 		info.Content = cfglist[num].fileName
 		info.RequestBitrate = cfglist[num].bitrateType
-		info.StreamingType = "static"
+		info.StreamingType = *StreamingType
+		//info.Path = "/kt/test/dahakan"
 
 		localAddr, err := net.ResolveIPAddr("ip", info.ClientIP)
 		if err != nil {
@@ -350,15 +489,20 @@ func main() {
 
 			defer wg.Done()
 
-			start := time.Now()
-			otuurl, err := gslbsetup(&info)
-			if err != nil {
-				log.Printf("[%d] error: %s", n, err)
-				return
+			var glburl string
+			if *UseGSLB {
+				start := time.Now()
+				glburl, err = gslbsetup(&info)
+				if err != nil {
+					log.Printf("[%d] error: %s", n, err)
+					return
+				}
+				log.Printf("[%d] gslb response time: %d ms", n, (int(time.Now().Sub(start)) / 1000000))
+			} else {
+				glburl = "http://" + *Address + "/" + info.ServiceCode + "/" + info.Content + "?AdapterType=HLS"
 			}
-			log.Printf("[%d] gslb response time: %d ms", i, (int(time.Now().Sub(start)) / 1000000))
 
-			theURL, err := url.Parse(otuurl)
+			theURL, err := url.Parse(glburl)
 			if err != nil {
 				log.Printf("[%d] error: %s", n, err)
 				return
@@ -382,7 +526,7 @@ func main() {
 				},
 			}
 
-			start = time.Now()
+			start := time.Now()
 			url, err := glbSetup(theURL, client)
 			if err != nil {
 				log.Printf("[%d] error: %s", n, err)
@@ -411,46 +555,87 @@ func main() {
 			}
 
 			if listType == m3u8.MASTER {
-
-				// HLS Live ( OTM Channel )
-
+				// HLS Adaptive
 				masterpl := playlist.(*m3u8.MasterPlaylist)
 				for _, variant := range masterpl.Variants {
-
 					if variant != nil {
-
-						msURL, err := absolutize(variant.URI, url)
-						if err != nil {
-							log.Printf("[%d] error: %s", n, err)
-							return
-						}
-						getPlaylist(msURL, t, client)
+						getPlaylist(variant, url, t, client, n)
 						break
 					}
 				}
 			} else if listType == m3u8.MEDIA {
-
-				// HLS VOD ( SKYLIFE Prime Movie Pack )
-
 				mediapl := playlist.(*m3u8.MediaPlaylist)
-
-				for _, segment := range mediapl.Segments {
-					if segment != nil {
-						msURL, err := absolutize(segment.URI, theURL)
+				if mediapl.Closed == false {
+					// HLS Live ( OTM Channel ). Static
+					log.Printf("[%d] Static Channel Session (OTM Channel)", n)
+					for t > 0 {
+						content, _, err := getContent(url, client)
 						if err != nil {
-							log.Printf("[%d] error: %s", n, err)
+							log.Println("error:", err)
 							break
 						}
-						download(msURL, client, segment.Duration)
-						t -= int(segment.Duration)
-					} else {
-						break
+
+						playlist, listType, err := m3u8.DecodeFrom(content, true)
+						if err != nil {
+							log.Println("error:", err)
+							break
+						}
+						content.Close()
+
+						if listType != m3u8.MEDIA && listType != m3u8.MASTER {
+							log.Println("error: Not a valid playlist")
+							break
+						}
+
+						if listType == m3u8.MEDIA {
+							mediapl := playlist.(*m3u8.MediaPlaylist)
+							for idx, segment := range mediapl.Segments {
+								if segment == nil {
+									chunk := mediapl.Segments[idx-1]
+									if chunk != nil {
+										msURL, err := absolutize(chunk.URI, url)
+										if err != nil {
+											log.Println("error:", err)
+											break
+										}
+										download(msURL, client, chunk.Duration)
+										t -= int(chunk.Duration)
+										break
+									}
+								}
+							}
+						} else {
+							log.Println("error: invaild m3u8 Type")
+							break
+						}
+					}
+				} else {
+					// HLS VOD ( SKYLIFE Prime Movie Pack )
+					log.Printf("[%d] Static VOD Session (Skylife Prime Movie Pack)", n)
+					for _, segment := range mediapl.Segments {
+						if segment != nil {
+							msURL, err := absolutize(segment.URI, theURL)
+							if err != nil {
+								log.Printf("[%d] error: %s", n, err)
+								break
+							}
+							// if i%5 == 0 {
+							// 	disconnectDownload(msURL, client, segment.Duration)
+							// }
+							download(msURL, client, segment.Duration)
+							t -= int(segment.Duration)
+							//i++
+						} else {
+							break
+						}
+
+						if t <= 0 {
+							break
+						}
 					}
 
-					if t <= 0 {
-						break
-					}
 				}
+
 			}
 			log.Printf("[%d] Session End", n)
 		}(*PlayTime, i)
