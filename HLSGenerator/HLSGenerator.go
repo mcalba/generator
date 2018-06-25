@@ -183,31 +183,32 @@ func absolutize(rawurl string, u *url.URL) (uri *url.URL, err error) {
 	return
 }
 
-func download(u *url.URL, c *http.Client, f float64) {
+func download(u *url.URL, c *http.Client, f float64) error {
 	start := time.Now()
 	content, _, err := getContent(u, c)
 	if err != nil {
-		log.Println("error:", err, "url:", u.String())
-		return
+		return err
 	}
+
+	defer content.Close()
 
 	for {
 		buf := make([]byte, 32*1024)
 		_, err := content.Read(buf)
 
 		if err != nil && err != io.EOF {
-			log.Println("error:", err, "url:", u.String())
-			break
+			return err
 		}
 
 		if err == io.EOF {
 			break
 		}
 	}
-	content.Close()
 
 	restime := int(f*1000) - (int(time.Now().Sub(start)) / 1000000)
 	time.Sleep(time.Duration(restime * 1000000))
+
+	return nil
 }
 
 func disconnectDownload(u *url.URL, c *http.Client, f float64) {
@@ -260,7 +261,11 @@ func getPlaylist(v *m3u8.Variant, u *url.URL, t int, c *http.Client, n int) {
 							log.Println("error:", err)
 							return
 						}
-						download(chunkURL, c, chunk.Duration)
+						err = download(chunkURL, c, chunk.Duration)
+						if err != nil {
+							log.Println("error:", err)
+							return
+						}
 						t -= int(chunk.Duration)
 					}
 				}
@@ -345,31 +350,51 @@ func getPlaylist(v *m3u8.Variant, u *url.URL, t int, c *http.Client, n int) {
 				}
 			}
 		}
-		subpl := subplaylist.(*m3u8.MediaPlaylist)
-		audiopl := audioplaylist.(*m3u8.MediaPlaylist)
+
+		var subpl *m3u8.MediaPlaylist
+		var audiopl *m3u8.MediaPlaylist
+
+		if subplaylist != nil {
+			subpl = subplaylist.(*m3u8.MediaPlaylist)
+		}
+		if audioplaylist != nil {
+			audiopl = audioplaylist.(*m3u8.MediaPlaylist)
+		}
 
 		for idx, segment := range mediapl.Segments {
 			start := time.Now()
-			// sub download
-			subseg := subpl.Segments[idx]
-			if subseg != nil {
-				msURL, err := absolutize(subseg.URI, u)
-				if err != nil {
-					log.Println("error:", err)
-					return
+			if subpl != nil {
+				// sub download
+				subseg := subpl.Segments[idx]
+				if subseg != nil {
+					msURL, err := absolutize(subseg.URI, u)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
+					err = download(msURL, c, 0)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
 				}
-				download(msURL, c, 0)
 			}
 
-			// audio download
-			audioseg := audiopl.Segments[idx]
-			if audioseg != nil {
-				msURL, err := absolutize(audioseg.URI, u)
-				if err != nil {
-					log.Println("error:", err)
-					return
+			if audiopl != nil {
+				// audio download
+				audioseg := audiopl.Segments[idx]
+				if audioseg != nil {
+					msURL, err := absolutize(audioseg.URI, u)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
+					err = download(msURL, c, 0)
+					if err != nil {
+						log.Println("error:", err)
+						return
+					}
 				}
-				download(msURL, c, 0)
 			}
 
 			// chunk download
@@ -379,8 +404,11 @@ func getPlaylist(v *m3u8.Variant, u *url.URL, t int, c *http.Client, n int) {
 					log.Println("error:", err)
 					return
 				}
-				download(msURL, c, segment.Duration)
-				t -= int(segment.Duration)
+				err = download(msURL, c, segment.Duration)
+				if err != nil {
+					log.Println("error:", err)
+					return
+				}
 			} else {
 				return
 			}
@@ -406,7 +434,7 @@ func main() {
 	flag.Parse()
 
 	if *FileName == "" || *Address == "" {
-		log.Println("HLSGenerator v1.0.5")
+		log.Println("HLSGenerator v1.0.6")
 		flag.Usage()
 		return
 	}
@@ -459,47 +487,52 @@ func main() {
 	wg := new(sync.WaitGroup)
 
 	for i := 0; i < *SessionCount; i++ {
-		info := gslbSetup{}
-		num := i
-
-		if num >= len(cfglist) {
-			num %= len(cfglist)
-		}
-
-		info.address = *Address
-		info.ServiceCode = cfglist[num].serviceCode
-		info.ClientIP = cfglist[num].destIP
-		info.ProtocolType = "http"
-		info.ContentType = cfglist[num].contentType
-		info.Content = cfglist[num].fileName
-		info.RequestBitrate = cfglist[num].bitrateType
-		info.StreamingType = *StreamingType
-		//info.Path = "/kt/test/dahakan"
-
-		localAddr, err := net.ResolveIPAddr("ip", info.ClientIP)
-		if err != nil {
-			log.Printf("[%d] error: %s", i, err)
-			continue
-		}
-
-		LocalBindAddr := &net.TCPAddr{IP: localAddr.IP}
-
 		wg.Add(1)
 		go func(t int, n int) {
-
 			defer wg.Done()
+			num := n
+
+			if num >= len(cfglist) {
+				num %= len(cfglist)
+			}
+
+			localAddr, err := net.ResolveIPAddr("ip", cfglist[num].destIP)
+			if err != nil {
+				log.Printf("[%d] error: %s", i, err)
+				return
+			}
+
+			LocalBindAddr := &net.TCPAddr{IP: localAddr.IP}
 
 			var glburl string
 			if *UseGSLB {
+				info := gslbSetup{}
+
+				info.address = *Address
+				info.ServiceCode = cfglist[num].serviceCode
+				info.ClientIP = cfglist[num].destIP
+				info.ProtocolType = "http"
+				info.ContentType = cfglist[num].contentType
+				info.RequestBitrate = cfglist[num].bitrateType
+				info.StreamingType = *StreamingType
+
+				if strings.Contains(cfglist[num].fileName, "/") {
+					info.Path = string(cfglist[num].fileName[0:(strings.LastIndex(cfglist[num].fileName, "/"))])
+					info.Content = string(cfglist[num].fileName[(strings.LastIndex(cfglist[num].fileName, "/"))+1 : len(cfglist[num].fileName)])
+				} else {
+					info.Content = cfglist[num].fileName
+				}
+
 				start := time.Now()
 				glburl, err = gslbsetup(&info)
 				if err != nil {
 					log.Printf("[%d] error: %s", n, err)
 					return
 				}
+
 				log.Printf("[%d] gslb response time: %d ms", n, (int(time.Now().Sub(start)) / 1000000))
 			} else {
-				glburl = "http://" + *Address + "/" + info.ServiceCode + "/" + info.Content + "?AdapterType=HLS"
+				glburl = "http://" + *Address + "/" + cfglist[num].serviceCode + "/" + cfglist[num].fileName + "?AdaptiveType=HLS"
 			}
 
 			theURL, err := url.Parse(glburl)
@@ -598,7 +631,11 @@ func main() {
 											log.Println("error:", err)
 											break
 										}
-										download(msURL, client, chunk.Duration)
+										err = download(msURL, client, chunk.Duration)
+										if err != nil {
+											log.Println("error:", err)
+											break
+										}
 										t -= int(chunk.Duration)
 										break
 									}
@@ -622,7 +659,11 @@ func main() {
 							// if i%5 == 0 {
 							// 	disconnectDownload(msURL, client, segment.Duration)
 							// }
-							download(msURL, client, segment.Duration)
+							err = download(msURL, client, segment.Duration)
+							if err != nil {
+								log.Println("error:", err)
+								break
+							}
 							t -= int(segment.Duration)
 							//i++
 						} else {
