@@ -211,14 +211,31 @@ func download(u *url.URL, c *http.Client, f float64) error {
 	return nil
 }
 
-func disconnectDownload(u *url.URL, c *http.Client, f float64) {
+func disconnectDownload(u *url.URL, c *http.Client, f float64) error {
+	start := time.Now()
 	content, _, err := getContent(u, c)
 	if err != nil {
-		log.Println("error:", err, "url:", u.String())
-		return
+		return err
 	}
 
-	content.Close()
+	for {
+		buf := make([]byte, 32*1024)
+		_, err := content.Read(buf)
+
+		if err != nil && err != io.EOF {
+			return err
+		}
+
+		if err == io.EOF {
+			content.Close()
+			break
+		}
+	}
+
+	restime := int(f*1000) - (int(time.Now().Sub(start)) / 1000000)
+	time.Sleep(time.Duration(restime * 1000000))
+
+	return nil
 }
 
 func getPlaylist(v *m3u8.Variant, u *url.URL, t int, c *http.Client, n int) {
@@ -430,11 +447,12 @@ func main() {
 	PlayTime := flag.Int("playtime", 900, "play time (second)")
 	StreamingType := flag.String("type", "static", "streaming type. adaptive or static")
 	UseGSLB := flag.Bool("gslb", true, "use gslb. true or false")
+	DisableKeepAlive := flag.Bool("disablekeepalive", false, "disable keepalive. true or false")
 
 	flag.Parse()
 
 	if *FileName == "" || *Address == "" {
-		log.Println("HLSGenerator v1.0.6")
+		log.Println("HLSGenerator v1.0.7")
 		flag.Usage()
 		return
 	}
@@ -545,11 +563,13 @@ func main() {
 				Proxy: http.ProxyFromEnvironment,
 				Dial: (&net.Dialer{
 					LocalAddr: LocalBindAddr,
-					Timeout:   30 * time.Second,
+					Timeout:   5 * time.Second,
 					KeepAlive: 30 * time.Second,
 				}).Dial,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
+				//Android
+				DisableKeepAlives: *DisableKeepAlive,
 			}
 
 			client := &http.Client{
@@ -656,16 +676,12 @@ func main() {
 								log.Printf("[%d] error: %s", n, err)
 								break
 							}
-							// if i%5 == 0 {
-							// 	disconnectDownload(msURL, client, segment.Duration)
-							// }
 							err = download(msURL, client, segment.Duration)
 							if err != nil {
 								log.Println("error:", err)
 								break
 							}
 							t -= int(segment.Duration)
-							//i++
 						} else {
 							break
 						}
