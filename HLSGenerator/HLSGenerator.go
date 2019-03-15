@@ -452,7 +452,7 @@ func main() {
 	flag.Parse()
 
 	if *FileName == "" || *Address == "" {
-		log.Println("HLSGenerator v1.0.7")
+		log.Println("HLSGenerator v1.0.8")
 		flag.Usage()
 		return
 	}
@@ -671,7 +671,7 @@ func main() {
 					log.Printf("[%d] Static VOD Session (Skylife Prime Movie Pack)", n)
 					for _, segment := range mediapl.Segments {
 						if segment != nil {
-							msURL, err := absolutize(segment.URI, theURL)
+							msURL, err := absolutize(segment.URI, url)
 							if err != nil {
 								log.Printf("[%d] error: %s", n, err)
 								break
