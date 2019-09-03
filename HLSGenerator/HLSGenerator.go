@@ -126,7 +126,7 @@ func vodsetup(u *url.URL, c *http.Client) (io.ReadCloser, *url.URL, error) {
 
 func getContent(u *url.URL, c *http.Client) (io.ReadCloser, *url.URL, error) {
 
-	//log.Println(u.String())
+	log.Println(u.String())
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
 		return nil, nil, err
@@ -141,6 +141,8 @@ func getContent(u *url.URL, c *http.Client) (io.ReadCloser, *url.URL, error) {
 	if resp.StatusCode != 200 {
 		return nil, nil, fmt.Errorf("Received HTTP %v for %v", resp.StatusCode, u.String())
 	}
+
+	log.Printf("Received HTTP %v for %v\n", resp.StatusCode, u.String())
 
 	resurl := resp.Request
 
@@ -204,6 +206,8 @@ func download(u *url.URL, c *http.Client, f float64) error {
 			break
 		}
 	}
+
+	log.Printf("Data Received Complete %v\n", u.String())
 
 	restime := int(f*1000) - (int(time.Now().Sub(start)) / 1000000)
 	time.Sleep(time.Duration(restime * 1000000))
@@ -574,6 +578,7 @@ func main() {
 
 			client := &http.Client{
 				Transport: httpTransport,
+				Timeout:   5 * time.Second,
 				CheckRedirect: func(req *http.Request, via []*http.Request) error {
 					return http.ErrUseLastResponse
 				},
@@ -643,21 +648,23 @@ func main() {
 						if listType == m3u8.MEDIA {
 							mediapl := playlist.(*m3u8.MediaPlaylist)
 							for idx, segment := range mediapl.Segments {
-								if segment == nil {
-									chunk := mediapl.Segments[idx-1]
-									if chunk != nil {
-										msURL, err := absolutize(chunk.URI, url)
-										if err != nil {
-											log.Println("error:", err)
+								if idx > 0 {
+									if segment == nil {
+										chunk := mediapl.Segments[idx-1]
+										if chunk != nil {
+											msURL, err := absolutize(chunk.URI, url)
+											if err != nil {
+												log.Println("error:", err)
+												break
+											}
+											err = download(msURL, client, chunk.Duration)
+											if err != nil {
+												log.Println("error:", err)
+												break
+											}
+											t -= int(chunk.Duration)
 											break
 										}
-										err = download(msURL, client, chunk.Duration)
-										if err != nil {
-											log.Println("error:", err)
-											break
-										}
-										t -= int(chunk.Duration)
-										break
 									}
 								}
 							}
