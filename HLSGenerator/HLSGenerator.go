@@ -508,6 +508,7 @@ func main() {
 
 	wg := new(sync.WaitGroup)
 
+	// test
 	for i := 0; i < *SessionCount; i++ {
 		wg.Add(1)
 		go func(t int, n int) {
