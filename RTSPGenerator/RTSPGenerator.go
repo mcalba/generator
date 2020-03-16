@@ -25,7 +25,7 @@ func RTSPSetup(url string, localIP string, seq int) (*rtsp.Session, *rtsp.Respon
 	client.LocalIP = localIP
 
 	start := time.Now()
-	res, err := client.Describe(url)
+	res, err := client.Describe(url, "goClient")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -43,7 +43,7 @@ func RTSPSetup(url string, localIP string, seq int) (*rtsp.Session, *rtsp.Respon
 	var transport = "RTP/AVP/TCP; unicast; interleaved=0-1"
 
 	start = time.Now()
-	res, err = client.Setup(url, transport)
+	res, err = client.Setup(url, transport, "goClient")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -55,8 +55,9 @@ func RTSPSetup(url string, localIP string, seq int) (*rtsp.Session, *rtsp.Respon
 
 	if res.StatusCode == 301 {
 
+		strurl := res.Header.Get("Location")
 		start = time.Now()
-		res, err = client.VODSetup(res.Header.Get("Location"), transport)
+		res, err = client.VODSetup(strurl, transport, "goClient")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -64,15 +65,16 @@ func RTSPSetup(url string, localIP string, seq int) (*rtsp.Session, *rtsp.Respon
 		if res.StatusCode != 200 {
 			return nil, nil, fmt.Errorf("RTSP Receved %v", res.Status)
 		}
-		log.Printf("[%d] vod setup response time: %d ms", seq, (int(time.Now().Sub(start)) / 1000000))
+		log.Printf("[%d] vod setup response time: %d ms, url = %v", seq, (int(time.Now().Sub(start)) / 1000000), strurl)
 	}
 
 	return client, res, err
 }
 
 // RTSPPlay "RTSP Play Fuction"
-func RTSPPlay(c *rtsp.Session, url string, id string, t int) error {
-	res, err := c.Play(url, id)
+func RTSPPlay(c *rtsp.Session, url string, id string, t int, seq int) error {
+	start := time.Now()
+	res, err := c.Play(url, id, "goClient")
 	if err != nil {
 		return err
 	}
@@ -80,13 +82,14 @@ func RTSPPlay(c *rtsp.Session, url string, id string, t int) error {
 	if res.StatusCode != 200 {
 		return fmt.Errorf("RTSP Receved %v", res.Status)
 	}
+	log.Printf("[%d] play response time: %d ms", seq, (int(time.Now().Sub(start)) / 1000000))
 
 	during := time.Now()
 	heartbeat := time.Now()
 
 	for {
 
-		buf := make([]byte, 32*1024)
+		buf := make([]byte, 64*1024)
 		_, err := res.Body.Read(buf)
 
 		if err != nil && err != io.EOF {
@@ -118,7 +121,7 @@ func RTSPPlay(c *rtsp.Session, url string, id string, t int) error {
 	}
 
 	for {
-		buf := make([]byte, 32*1024)
+		buf := make([]byte, 64*1024)
 		_, err := res.Body.Read(buf)
 
 		if err != nil && err != io.EOF {
@@ -141,11 +144,12 @@ func main() {
 	SessionCount := flag.Int("count", 0, "the number of session. default is generation info file count")
 	Interval := flag.Int("interval", 1000, "session generation interval (millisecond)")
 	PlayTime := flag.Int("playtime", 900, "play time (second)")
+	PlayInterval := flag.Int("playinterval", 0, "time to play after setup (second)")
 
 	flag.Parse()
 
 	if *FileName == "" || *Address == "" {
-		log.Println("RTSPGenerator v1.0.3")
+		log.Println("RTSPGenerator v1.0.4")
 		flag.Usage()
 		return
 	}
@@ -215,7 +219,11 @@ func main() {
 				return
 			}
 
-			err = RTSPPlay(client, url, res.Header.Get("Session"), t)
+			if *PlayInterval > 0 {
+				time.Sleep(time.Duration(*PlayInterval * 1000000000))
+			}
+
+			err = RTSPPlay(client, url, res.Header.Get("Session"), t, n)
 			if err != nil {
 				log.Printf("[%d] error: %s", n, err)
 				return
@@ -224,7 +232,9 @@ func main() {
 			log.Printf("[%d] Session End", n)
 		}(*PlayTime, i)
 
-		time.Sleep(time.Duration(*Interval * 1000000))
+		if *Interval > 1 {
+			time.Sleep(time.Duration(*Interval * 1000000))
+		}
 	}
 	wg.Wait()
 	log.Println("the all end")
