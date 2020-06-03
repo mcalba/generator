@@ -1,2 +1,2 @@
-컨텐츠명	ClientIP
-MSTH403MSGL1500002_K20170502112749.mpg	172.16.120.10
+컨텐츠명	ClientIP    ServiceCode ContentType
+VBRTest.mpg	172.16.120.10   OTP LIVE
