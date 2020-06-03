@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -17,8 +19,58 @@ import (
 )
 
 type configInfo struct {
-	fileName string
-	destIP   string
+	fileName    string
+	destIP      string
+	serviceCode string
+	contentType string
+}
+
+type gslbSetup struct {
+	address        string
+	ServiceCode    string `json:"serviceCode"`
+	ClientIP       string `json:"clientIp"`
+	ProtocolType   string `json:"protocolType"`
+	ContentType    string `json:"contentType"`
+	Content        string `json:"content"`
+	RequestBitrate string `json:"requestBitrate"`
+	StreamingType  string `json:"streamingType"`
+	Path           string `json:"path"`
+}
+
+type gslbresponse struct {
+	ResultCode  int      `json:"resultCode"`
+	OneTimeURL  []string `json:"oneTimeUrl"`
+	ErrorString string   `json:"errorString"`
+}
+
+func gslbsetup(info *gslbSetup) (string, error) {
+	doc, _ := json.Marshal(info)
+	buff := bytes.NewBuffer(doc)
+	url := "http://" + info.address + "/command/demandOtu"
+	resp, err := http.Post(url, "application/json", buff)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case 200:
+		res, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+
+		data := gslbresponse{}
+		json.Unmarshal(res, &data)
+		if data.ResultCode != 200 {
+			return "", fmt.Errorf(data.ErrorString)
+		}
+		return data.OneTimeURL[0], err
+
+	default:
+		return "", fmt.Errorf("Status Code = %d", resp.StatusCode)
+	}
 }
 
 // GetADVSchedules "GET ADList Function"
@@ -257,11 +309,12 @@ func main() {
 	Interval := flag.Int("interval", 1000, "session generation interval (millisecond)")
 	PlayTime := flag.Int("playtime", 900, "play time (second)")
 	PlayInterval := flag.Int("playinterval", 0, "time to play after setup (second)")
+	UseGSLB := flag.Bool("gslb", true, "use gslb. true or false (ex) -gslb=false")
 
 	flag.Parse()
 
 	if *FileName == "" || *Address == "" {
-		log.Println("SDKGenerator v1.0.1")
+		log.Println("SDKGenerator v1.0.2")
 		flag.Usage()
 		return
 	}
@@ -282,7 +335,7 @@ func main() {
 	for i < len(token) {
 		if token[i] != "" {
 			data := strings.Fields(token[i])
-			if len(data) != 2 {
+			if len(data) != 4 {
 				log.Println("invalid config data : ", token[i])
 				i++
 				continue
@@ -292,6 +345,8 @@ func main() {
 
 			cfg.fileName = data[0]
 			cfg.destIP = data[1]
+			cfg.serviceCode = data[2]
+			cfg.contentType = data[3]
 
 			cfglist = append(cfglist, cfg)
 		}
@@ -323,9 +378,38 @@ func main() {
 
 			defer wg.Done()
 
-			url := "rtsp://" + *Address + "/" + cfglist[num].fileName
+			var glburl string
+			if *UseGSLB {
+				info := gslbSetup{}
 
-			client, res, conn, err := RTSPSetup(url, cfglist[num].destIP, n)
+				info.address = *Address
+				info.ServiceCode = cfglist[num].serviceCode
+				info.ClientIP = cfglist[num].destIP
+				info.ProtocolType = "rtsp"
+				info.ContentType = cfglist[num].contentType
+				info.RequestBitrate = "H"
+				info.StreamingType = "static"
+
+				if strings.Contains(cfglist[num].fileName, "/") {
+					info.Path = string(cfglist[num].fileName[0:(strings.LastIndex(cfglist[num].fileName, "/"))])
+					info.Content = string(cfglist[num].fileName[(strings.LastIndex(cfglist[num].fileName, "/"))+1 : len(cfglist[num].fileName)])
+				} else {
+					info.Content = cfglist[num].fileName
+				}
+
+				start := time.Now()
+				glburl, err = gslbsetup(&info)
+				if err != nil {
+					log.Printf("[%d] error: %s", n, err)
+					return
+				}
+
+				log.Printf("[%d] gslb response time: %d ms", n, (int(time.Now().Sub(start)) / 1000000))
+			} else {
+				glburl = "rtsp://" + *Address + "/" + cfglist[num].fileName
+			}
+
+			client, res, conn, err := RTSPSetup(glburl, cfglist[num].destIP, n)
 			if err != nil {
 				log.Printf("[%d] error: %s", n, err)
 				return
@@ -335,7 +419,7 @@ func main() {
 				time.Sleep(time.Duration(*PlayInterval * 1000000000))
 			}
 
-			err = RTSPPlay(client, conn, url, strings.Split(res.Header.Get("Session"), ";")[0], t, n)
+			err = RTSPPlay(client, conn, glburl, strings.Split(res.Header.Get("Session"), ";")[0], t, n)
 			if err != nil {
 				log.Printf("[%d] error: %s", n, err)
 				return
